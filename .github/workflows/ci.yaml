@@ -1,0 +1,371 @@
+name: CI/CD
+
+on:
+  workflow_dispatch:  
+    inputs:
+      check_pdf:
+        description: "Отчёт (галочка для проверяющего)"
+        default: false
+        type: boolean
+      rounding:
+        description: "Округление"
+        required: true
+        default: "0"
+        type: choice
+        options:
+        - "0"
+        - "1"
+        - "2"
+        - "3"
+              
+      print:
+        description: "Тест на вывод"
+        required: true
+        default: "Только фиксированная точка"
+        type: choice
+        options:
+        - "Только фиксированная точка"
+        - "Только плавающая точка"
+        - "Фиксированная и плавающая точка"
+
+      fixed_op:
+        description: "Тест с + (фиксированная точка)"
+        default: false
+        type: boolean        
+      floating_op:
+        description: "Тест с +* (плавающая точка)"
+        default: false
+        type: boolean       
+      half_op:
+        description: "Тест с * и выводом (плавающая точка с половинной точностью)"
+        default: false
+        type: boolean     
+      floating_special:
+        description: "Тест на специальные случаи с плавающей точкой"
+        default: false
+        type: boolean
+  
+env:
+  BUILDLOG: "build.log"
+  OUTLOG: "result.log"
+  
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  buildtest:
+    if: (github.actor == 'RonoveRaum') || (github.run_number < 22)
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        os:  [ubuntu-22.04, windows-latest] 
+    
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 4
+    env:    
+      STUPID_LINUX_LIBM: $(If ('${{ matrix.os }}' -eq 'windows-latest') {''} Else {'-lm'})
+      EXE: __test.exe
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: init
+        id: init
+        run: |
+          echo "# Parameters" >> $env:GITHUB_STEP_SUMMARY
+          echo " Проверка отчёта - check_pdf: $${{ inputs.check_pdf }}" >> $env:GITHUB_STEP_SUMMARY
+          echo " Округление 0: ${{ inputs.rounding }}" >> $env:GITHUB_STEP_SUMMARY
+          echo " Тест на вывод - print: ${{ inputs.print }}" >> $env:GITHUB_STEP_SUMMARY
+          echo " Тест с + (фиксированная точка) - fixed_op: $${{ inputs.fixed_op }}" >> $env:GITHUB_STEP_SUMMARY
+          echo " Тест с * (плавающая точка) - floating_op: $${{ inputs.floating_op }}" >> $env:GITHUB_STEP_SUMMARY
+          echo " Тест с * (плавающая точка с половинной точностью) - half_op: $${{ inputs.half_op }}" >> $env:GITHUB_STEP_SUMMARY
+          echo " Тест на специальные случаи с плавающей точкой - floating_special: $${{ inputs.floating_special }}" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: check_pdf
+        id: check_pdf
+        if: (inputs.check_pdf)
+        run: |
+           $pdf = Get-ChildItem -Path ./* -Include '*.pdf'
+           try 
+           {
+             $check = $pdf.GetType() -eq [System.IO.FileInfo]
+             echo "# Check .pdf 
+                $(if ($check) {"✅ PASSED"} else {"❌ report(.pdf) not found or found more than 1 .pdf file"})" >> $env:GITHUB_STEP_SUMMARY
+             exit $pdf.GetType() -ne [System.IO.FileInfo]
+           }
+           catch
+           {
+             echo "# Check .pdf 
+                ❌ report(.pdf) not found or found more than 1 .pdf file" >> $env:GITHUB_STEP_SUMMARY
+           }
+           exit(1)
+                                
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+          
+      - name: detect_lang
+        id: detect_lang
+        run: | 
+          echo "# Detect language" >> $env:GITHUB_STEP_SUMMARY
+          $ErrorActionPreference = 'SilentlyContinue'
+          $python = Get-ChildItem -Force -File -Name main.py
+          $cpp = Get-ChildItem -Force -File -Name main.cpp
+          $c = Get-ChildItem -Force -File -Name main.c
+          $java = Get-ChildItem -Force -File -Name Main.java
+
+          [void](mkdir __build)
+
+          "::group::debug info"
+          echo "python=$python $($python.GetType()) $($python.GetType() -eq [String])"
+          echo "cpp=$cpp $($cpp.GetType()) $($cpp.GetType() -eq [String])"
+          echo "c=$c $($c.GetType()) $($c.GetType() -eq [String])"
+          echo "java=$java $($java.GetType()) $($java.GetType() -eq [String])"
+          "::endgroup::" 
+
+          if ($python.GetType() -eq [String])
+          {
+              $version = $(python --version) -join "`n"
+              echo "Detect ✅: Python">> $env:GITHUB_STEP_SUMMARY
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+                echo "$($version)">> $env:GITHUB_STEP_SUMMARY
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+              echo "lang=0" >> $env:GITHUB_OUTPUT 
+              exit(0)
+          }
+          if ($cpp.GetType() -eq [String])
+          {
+              $version = $(clang++ --version) -join "`n"
+              echo "Detect ✅: C++">> $env:GITHUB_STEP_SUMMARY
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+                echo "$($version)">> $env:GITHUB_STEP_SUMMARY
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+                echo "lang=1" >> $env:GITHUB_OUTPUT      
+              exit(0)
+          }
+          if ($c.GetType() -eq [String])
+          {
+              $version = $(clang --version) -join "`n"
+              echo "Detect ✅: C">> $env:GITHUB_STEP_SUMMARY
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+                echo "$($version)">> $env:GITHUB_STEP_SUMMARY
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+                echo "lang=2" >> $env:GITHUB_OUTPUT      
+              exit(0)
+          }
+          if ($java.GetType() -eq [String])
+          {
+              $env.JAVA_HOME = $env.JAVA_HOME_17_X64
+              $version = $(java --version) -join "`n"
+              echo "Detect ✅: Java">> $env:GITHUB_STEP_SUMMARY
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+                echo "$($version)">> $env:GITHUB_STEP_SUMMARY
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+                echo "lang=3" >> $env:GITHUB_OUTPUT      
+              exit(0)
+          }
+          echo "Detect failed ❌">> $env:GITHUB_STEP_SUMMARY             
+          exit(1)
+          
+      - name: build
+        id: build
+        if: steps.detect_lang.outputs.lang > 0
+        run: |   
+          #Get-ChildItem Env:* | Select-Object -Property Name,Value | Sort-Object -Property Name
+          try 
+          {
+            $ErrorActionPreference = 'SilentlyContinue'
+            
+            if (${{ steps.detect_lang.outputs.lang }} -eq 3)  
+            {
+              pwsh -Command { javac Main.java *>&1 > ${{env.BUILDLOG}} } 
+            }
+            else
+            {
+              cd __build 
+              clang --version
+              if (${{ steps.detect_lang.outputs.lang }} -eq 2)  
+              {
+                pwsh -Command { clang -std=c2x -D _CRT_SECURE_NO_WARNINGS -D _USE_MATH_DEFINES -O2 -Wvla ${{env.STUPID_LINUX_LIBM}} -I '../include/' $((Get-ChildItem -Path .. -Include @('*.c', '*.cpp') -Recurse -ErrorAction SilentlyContinue -Force).FullName) -o ${{env.EXE}} *>&1 > ${{env.BUILDLOG}} } 
+              }
+              else
+              {
+                pwsh -Command { clang++ -std=c++20 -D _CRT_SECURE_NO_WARNINGS -D _USE_MATH_DEFINES -O2 ${{env.STUPID_LINUX_LIBM}} -I '../include/' $((Get-ChildItem -Path .. -Include @('*.c', '*.cpp') -Recurse -ErrorAction SilentlyContinue -Force).FullName) -o ${{env.EXE}} *>&1 > ${{env.BUILDLOG}} } 
+              }
+            }     
+          } 
+          catch 
+          {
+            Write-Output "❌ build failed!"
+            echo "# Build: 
+               failed" >> $env:GITHUB_STEP_SUMMARY
+            echo "Build exit code: $LastExitCode" >> $env:GITHUB_STEP_SUMMARY
+            $blog="$(Get-Content ${{env.BUILDLOG}} -Raw)"
+            echo "Build log: $blog" >> $env:GITHUB_STEP_SUMMARY 
+          } 
+          finally 
+          {
+            $blog="$(Get-Content ${{env.BUILDLOG}} -Raw)"
+
+            if ($blog.Length)
+            {            
+              Write-Output "::notice Build log not empty:"
+              echo "# Build log:" >> $env:GITHUB_STEP_SUMMARY
+              echo '```' >> $env:GITHUB_STEP_SUMMARY
+              "$blog" >> $env:GITHUB_STEP_SUMMARY
+              echo '```' >> $env:GITHUB_STEP_SUMMARY
+            }
+            "::group::Build log"
+            echo $blog
+            echo "::endgroup::"  
+          }
+                         
+      - name: tests
+        id: tests
+        run: | 
+          $tests = @()
+
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 0"; active="${{inputs.print}}" -ne "Тольцо плавающая точка" -and "${{inputs.rounding}}" -eq "0"; argv="16.12 0 0x17360"; ref="23.210" }  
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 1"; active="${{inputs.print}}" -ne "Тольцо плавающая точка" -and "${{inputs.rounding}}" -eq "1"; argv="16.16 1 0x173600"; ref="23.211" }
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 2"; active="${{inputs.print}}" -ne "Тольцо плавающая точка" -and "${{inputs.rounding}}" -eq "2"; argv="8.8 2 0x9c9f"; ref="-99.378" }
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 3"; active="${{inputs.print}}" -ne "Тольцо плавающая точка" -and "${{inputs.rounding}}" -eq "3"; argv="8.8 3 0x9c9f"; ref="-99.379" }
+
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: + с округлением 0"; active="${{inputs.rounding}}" -eq "0" -and $${{inputs.fixed_op}}; argv="8.8 0 0x9c9f + 0x1736"; ref="-76.167" }
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: + с округлением 1"; active="${{inputs.rounding}}" -eq "1" -and $${{inputs.fixed_op}}; argv="8.8 1 0xdc9f + 0xd736"; ref="-76.168" } #mod
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: + с округлением 2"; active="${{inputs.rounding}}" -eq "2" -and $${{inputs.fixed_op}}; argv="16.16 2 0x6f7600 + 0x173600"; ref="134.672" }
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: + с округлением 3"; active="${{inputs.rounding}}" -eq "3" -and $${{inputs.fixed_op}}; argv="16.16 3 0x6f7600 + 0x173600"; ref="134.671" }
+          
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): вывод с округлением 0"; active="${{inputs.print}}" -ne "Только фиксированная точка" -and "${{inputs.rounding}}" -eq "0"; argv="f 0 0xB9CD542"; ref="0x1.39aa84p-104" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): вывод с округлением 1"; active="${{inputs.print}}" -ne "Только фиксированная точка" -and "${{inputs.rounding}}" -eq "1"; argv="f 1 0x3"; ref="0x1.800000p-148" } #denorm
+          
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): * с округлением 0"; active=$${{inputs.floating_op}} -and "${{inputs.rounding}}" -eq "0"; argv="f 0 0x414587dd * 0x42ebf110"; ref="0x1.6c1b72p+10" }  
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): * с округлением 1"; active=$${{inputs.floating_op}} -and "${{inputs.rounding}}" -eq "1"; argv="f 1 0x414587dd * 0x42ebf110"; ref="0x1.6c1b72p+10" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): * с округлением 2"; active=$${{inputs.floating_op}} -and "${{inputs.rounding}}" -eq "2"; argv="f 2 0x414587dd * 0x42ebf110"; ref="0x1.6c1b74p+10" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): * с округлением 3"; active=$${{inputs.floating_op}} -and "${{inputs.rounding}}" -eq "3"; argv="f 3 0x414587dd * 0x42ebf110"; ref="0x1.6c1b72p+10" } 
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): + с округлением 0"; active=$${{inputs.floating_op}} -and "${{inputs.rounding}}" -eq "0"; argv="f 0 0x414587dd + 0x42ebf110"; ref="0x1.04a20ap+7" }  
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): + с округлением 1"; active=$${{inputs.floating_op}} -and "${{inputs.rounding}}" -eq "1"; argv="f 1 0x414587dd + 0x42ebf110"; ref="0x1.04a20cp+7" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): + с округлением 2"; active=$${{inputs.floating_op}} -and "${{inputs.rounding}}" -eq "2"; argv="f 2 0x414587dd + 0x42ebf110"; ref="0x1.04a20cp+7" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): + с округлением 3"; active=$${{inputs.floating_op}} -and "${{inputs.rounding}}" -eq "3"; argv="f 3 0x414587dd + 0x42ebf110"; ref="0x1.04a20ap+7" }
+
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (half): * с округлением 0"; active=$${{inputs.half_op}} -and "${{inputs.rounding}}" -eq "0"; argv="h 0 0x4145 * 0x42eb"; ref="0x1.238p+3" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (half): * с округлением 1"; active=$${{inputs.half_op}} -and "${{inputs.rounding}}" -eq "1"; argv="h 1 0x4145 * 0x42eb"; ref="0x1.23cp+3" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (half): * с округлением 2"; active=$${{inputs.half_op}} -and "${{inputs.rounding}}" -eq "2"; argv="h 2 0x4145 * 0x42eb"; ref="0x1.23cp+3" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (half): * с округлением 3"; active=$${{inputs.half_op}} -and "${{inputs.rounding}}" -eq "3"; argv="h 3 0x4145 * 0x42eb"; ref="0x1.238p+3" }#recheck
+
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (half): -0 + 0"; active=$${{inputs.half_op}} -and $${{inputs.floating_special}} -and "${{inputs.rounding}}" -ne "3"; argv="h $(${{inputs.rounding}}) 0x8000 + 0x0"; ref="0x0.000p+0" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (half): -0 + 0"; active=$${{inputs.half_op}} -and $${{inputs.floating_special}} -and "${{inputs.rounding}}" -eq "3"; argv="h $(${{inputs.rounding}}) 0x8000 + 0x0"; ref="-0x0.000p+0" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (half): 0"; active=${{inputs.half_op}} -and $${{inputs.floating_special}}; argv="h $(${{inputs.rounding}}) 0x0"; ref="0x0.000p+0" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): 0"; active=("${{inputs.print}}" -ne "Только фиксированная точка") -and $${{inputs.floating_special}}; argv="f $(${{inputs.rounding}}) 0x0"; ref="0x0.000000p+0" }  
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): inf"; active=("${{inputs.print}}" -ne "Только фиксированная точка") -and $${{inputs.floating_special}}; argv="f $(${{inputs.rounding}}) 0x7f800000"; ref="inf" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): -inf"; active=("${{inputs.print}}" -ne "Только фиксированная точка") -and $${{inputs.floating_special}}; argv="f $(${{inputs.rounding}}) 0xff800000"; ref="-inf" }  
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): nan"; active=("${{inputs.print}}" -ne "Только фиксированная точка") -and $${{inputs.floating_special}}; argv="f $(${{inputs.rounding}}) 0x7fc00000"; ref="nan" } 
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): / inf"; active=$${{inputs.floating_op}} -and $${{inputs.floating_special}}; argv="f $(${{inputs.rounding}}) 0x1 / 0x0"; ref="inf" }
+          $tests += New-Object PSObject -Property @{ name="Плав. точка (single): / nan"; active=$${{inputs.floating_op}} -and $${{inputs.floating_special}}; argv="f $(${{inputs.rounding}}) 0xff800000 / 0x7f800000"; ref="nan" }
+
+          cd __build
+        
+          $test_exit_code = $tests.Count
+          foreach ($test in $tests)
+          {
+            if (-not $test.active) 
+            {
+              $test_exit_code -= 1
+              continue
+            }
+            echo "## Test $($test.name)" >> $env:GITHUB_STEP_SUMMARY  
+            "::group::Output log test_$($test.name)"
+
+            $test_input = $test.argv.Split() | ForEach { """$_""" } 
+            $test_ref = $test.ref
+            
+            if (${{ steps.detect_lang.outputs.lang }})  
+            { & ./${{env.EXE}} $test_input 2>stderr.log 1>stdout.log }
+            else
+            { python ../main.py $test_input 2>stderr.log 1>stdout.log  }
+            $exit_code_p = $LastExitCode           
+            
+            $stderr = if ((& Test-Path -Path stderr.log -PathType Leaf)) { $(Get-Content stderr.log -Raw) } else {'<empty>'}
+            $stdout = if ((& Test-Path -Path stdout.log -PathType Leaf)) { $(Get-Content stdout.log -Raw) } else {'<empty>'}
+            $stdout1 = ""
+            try { $stdout1 = $stdout.replace('`n', '<br>') } catch { $stdout1 = '<empty>' }
+                        
+            echo "| input (argv) | expected | exit code |" >> $env:GITHUB_STEP_SUMMARY   
+            echo "| --- | --- | --- |" >> $env:GITHUB_STEP_SUMMARY    
+            echo "| <code>$($test.argv)</code> | <code>$($test_ref)</code> | <code>$exit_code_p</code> |" >> $env:GITHUB_STEP_SUMMARY   
+            
+            #echo "input (argv):" >> $env:GITHUB_STEP_SUMMARY            
+            #  echo '```' >> $env:GITHUB_STEP_SUMMARY
+            #  "$($test.argv)" >> $env:GITHUB_STEP_SUMMARY
+            #  echo '```' >> $env:GITHUB_STEP_SUMMARY
+            #echo "ref (expected):" >> $env:GITHUB_STEP_SUMMARY            
+            #  echo '```' >> $env:GITHUB_STEP_SUMMARY
+            #  "$($test_ref)" >> $env:GITHUB_STEP_SUMMARY
+            #  echo '```' >> $env:GITHUB_STEP_SUMMARY
+            echo "
+            output:" >> $env:GITHUB_STEP_SUMMARY            
+              echo '```' >> $env:GITHUB_STEP_SUMMARY
+              "$stdout" >> $env:GITHUB_STEP_SUMMARY
+              echo '```' >> $env:GITHUB_STEP_SUMMARY                          
+            #echo "exit code: $exit_code_p
+            #" >> $env:GITHUB_STEP_SUMMARY           
+                               
+            echo "
+            [stderr]:" >> $env:GITHUB_STEP_SUMMARY              
+            echo '```' >> $env:GITHUB_STEP_SUMMARY
+            "$stderr" >> $env:GITHUB_STEP_SUMMARY
+            echo '```' >> $env:GITHUB_STEP_SUMMARY
+
+            echo "Result:" >> $env:GITHUB_STEP_SUMMARY 
+            if ($exit_code_p -ne 0)
+            {         
+              echo '```' >> $env:GITHUB_STEP_SUMMARY      
+              echo "❌ [ERROR] Program completed with code $exit_code_p (!= 0)" >> $env:GITHUB_STEP_SUMMARY 
+              echo '```' >> $env:GITHUB_STEP_SUMMARY               
+              $test_exit_code += 10
+            }          
+            elseif ((& Test-Path -Path stderr.log -PathType Leaf) -and ((Get-ChildItem -Path stderr.log).Length -ne 0))
+            {
+              echo '```' >> $env:GITHUB_STEP_SUMMARY
+              echo "❌ [ERROR] Stderr is not empty [program completed with code $exit_code_p]" >> $env:GITHUB_STEP_SUMMARY        
+              echo '```' >> $env:GITHUB_STEP_SUMMARY       
+              $test_exit_code += 100
+            } 
+            elseif ((& Test-Path -Path stdout.log -PathType Leaf) -and ($stdout1 -eq '<empty>'))
+            {
+              echo '```' >> $env:GITHUB_STEP_SUMMARY
+              echo "❌ [ERROR] Stdout is empty [program completed with code $exit_code_p]" >> $env:GITHUB_STEP_SUMMARY  
+              echo '```' >> $env:GITHUB_STEP_SUMMARY              
+              $test_exit_code += 1000
+            }
+            else
+            {
+              $stdout = $stdout.split([System.Environment]::NewLine, [System.StringSplitOptions]::RemoveEmptyEntries)[0] 
+              $res_test = $stdout -eq $test_ref
+              if ($res_test) 
+              { 
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+                echo "✅ PASSED" >> $env:GITHUB_STEP_SUMMARY
+                echo '```' >> $env:GITHUB_STEP_SUMMARY               
+                $test_exit_code -= 1
+              }
+              else
+              {
+                echo '```' >> $env:GITHUB_STEP_SUMMARY
+                echo "❌ FAILED [output != expected]" >> $env:GITHUB_STEP_SUMMARY 
+                echo '```' >> $env:GITHUB_STEP_SUMMARY              
+                $test_exit_code -= 0
+              } 
+            }
+            echo "[debug] error codes: $test_exit_code" >> $env:GITHUB_STEP_SUMMARY   
+          }
+          "::endgroup::"
+          
+          exit($test_exit_code)
