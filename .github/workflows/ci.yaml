@@ -286,7 +286,9 @@ jobs:
             $test_input = $test.argv.Split() | ForEach { """$_""" } 
             $test_ref = $test.ref
             
-            if (${{ steps.detect_lang.outputs.lang }})  
+            if (${{ steps.detect_lang.outputs.lang }} -eq 3) 
+            { java -classpath ../ Main $test_input 2>stderr.log 1>stdout.log }
+            elseif (${{ steps.detect_lang.outputs.lang }} -ne 0)  
             { & ./${{env.EXE}} $test_input 2>stderr.log 1>stdout.log }
             else
             { python ../main.py $test_input 2>stderr.log 1>stdout.log  }
