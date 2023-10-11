@@ -34,9 +34,9 @@ int clz(ui x) {
 
 void _format_parse_ab(char *arg, ui *a, ui *b) {
     char *dot;
-    *a = strtol(arg, &dot, 10);
+    *a = strtoll(arg, &dot, 10);
     dot++;
-    *b = strtol(dot, &dot, 10);
+    *b = strtoll(dot, &dot, 10);
 }
 
 void _format_error_message() {
@@ -100,11 +100,11 @@ ui _format_parse_hex(char *arg) {
     int len = strlen(arg);
     if (len > 10) {
         char *useless;
-        ui ans = strtol(arg + len - 8, &useless, 16);
+        ui ans = strtoll(arg + len - 8, &useless, 16);
         return ans;
     } else {
         char *useless;
-        ui ans = strtol(arg + 2, &useless, 16);
+        ui ans = strtoll(arg + 2, &useless, 16);
         return ans;
     }
 }
