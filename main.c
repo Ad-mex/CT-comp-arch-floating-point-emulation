@@ -186,7 +186,11 @@ ui _fixed_div(ui num1, ui num2, ui a, ui b) {
         dv = _fixed_minus(dv, a, b);
     }
 
-    return dv;
+    if (ext_num1 % num2 && _fixed_has_minus(dv, a, b)) {
+        dv++;
+    }
+
+    return _fixed_normalize(dv, a, b);
 }
 
 /*
