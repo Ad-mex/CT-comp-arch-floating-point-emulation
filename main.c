@@ -14,11 +14,11 @@ void out(ull x, int bits) {
     puts("");
 }
 
-#ifndef __GNUC__
+#ifdef __GNUC__
 #define clz(x) __builtin_clz(x)
 #else
 int clz(ui x) {
-    for (int shift = 31; shift >= 0; shift++) {
+    for (int shift = 31; shift >= 0; shift--) {
         if (x >> shift & 1)
             return 31 - shift;
     }
