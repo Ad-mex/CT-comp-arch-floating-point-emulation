@@ -7,15 +7,9 @@
 #define ull unsigned long long
 #define us unsigned short
 
-void out(ull x, int bits) {
-    for (int i = bits - 1; i >= 0; i--) {
-        printf("%d", (int)x >> i & 1);
-    }
-    puts("");
-}
-
 #ifdef __GNUC__
 #define clz(x) __builtin_clz(x)
+#define clzll(x) __builtin_clzll(x)
 #else
 int clz(ui x) {
     for (int shift = 31; shift >= 0; shift--) {
@@ -23,6 +17,13 @@ int clz(ui x) {
             return 31 - shift;
     }
     return 32;
+}
+int clzll(ull x) {
+    for (int shift = 63; shift >= 0; shift--) {
+        if (x >> shift & 1)
+            return 63 - shift;
+    }
+    return 64;
 }
 #endif
 
@@ -89,7 +90,7 @@ void _format_error_hex_arg(char *arg) {
         _format_error_message();
     }
     for (int i = 2; i < len; i++) {
-        if ((arg[i] < 'a' || arg[i] > 'z') && (arg[i] < 'A' || arg[i] > 'Z') &&
+        if ((arg[i] < 'a' || arg[i] > 'f') && (arg[i] < 'A' || arg[i] > 'F') &&
             (arg[i] < '0' || arg[i] > '9')) {
             _format_error_message();
         }
@@ -134,8 +135,8 @@ void _fixed_out(ui num, ui a, ui b) {
         num = _fixed_minus(num, a, b);
     }
     printf("%d.", num >> b);
-    ull rac = num & ((1u << b) - 1);
-    printf("%03d", (ui)((rac * 125) >> (b - 3)));
+    ull frac = num & ((1u << b) - 1);
+    printf("%03d", (ui)((frac * 125) >> (b - 3)));
 }
 
 ui _fixed_add(ui num1, ui num2, ui a, ui b) {
@@ -289,15 +290,21 @@ void _single_out(ui x) {
         } else {
             int exp = _single_get_exp(x);
             ui mant = _single_get_mant(x);
-            printf("0x1.%06xp%c%d", _single_align_mant_to_hex(mant),
-                   exp < 0 ? 0 : '+', exp);
+            printf("0x1.%06xp", _single_align_mant_to_hex(mant));
+            if (exp < 0) {
+                printf("%d", exp);
+            } else {
+                printf("+%d", exp);
+            }
         }
     }
 }
 
-ui _single_construct(int exp, ui mask) {
+ui _single_construct(int exp, ull mask) {
+    if (mask == 0)
+        return SINGLE_NULL;
 
-    int shift = clz(mask) - 8;
+    int shift = clzll(mask) - 8 - 32;
     if (shift < 0) {
         mask >>= -shift;
         exp -= shift;
@@ -307,9 +314,17 @@ ui _single_construct(int exp, ui mask) {
         mask <<= shift;
         exp -= shift;
         mask ^= 1 << 23;
+        if (exp >= 128)
+            return SINGLE_PLUS_INF;
         return (((ui)(exp + 127)) << 23) | mask;
     }
-    mask <<= (exp + 126);
+
+    if (exp < -126) {
+        if (-126 - exp >= 32)
+            return SINGLE_NULL;
+        mask >>= -126 - exp;
+    } else
+        mask <<= (exp + 126);
     return mask;
 }
 
@@ -319,7 +334,7 @@ ui _single_sub(ui, ui);
 
 ui _single_add(ui a, ui b) {
     if (_single_is_nan(a) || _single_is_nan(b)) {
-        return a;
+        return SINGLE_NAN;
     }
     if (_single_is_plus_inf(a) && _single_is_minus_inf(b) ||
         _single_is_minus_inf(a) && _single_is_plus_inf(b)) {
@@ -378,7 +393,7 @@ ui _single_add(ui a, ui b) {
 
 ui _single_sub(ui a, ui b) {
     if (_single_is_nan(a) || _single_is_nan(b)) {
-        return a;
+        return SINGLE_NAN;
     }
     if (_single_is_plus_inf(a) && _single_is_plus_inf(b) ||
         _single_is_minus_inf(a) && _single_is_minus_inf(b)) {
@@ -390,14 +405,14 @@ ui _single_sub(ui a, ui b) {
     if (_single_is_minus_inf(a) && _single_is_plus_inf(b)) {
         return SINGLE_MINUS_INF;
     }
-    if (_single_has_minus(a) && _single_has_minus(b)) {
-        return _single_minus(_single_add(_single_minus(a), _single_minus(b)));
-    }
     if (_single_has_minus(a) && !_single_has_minus(b)) {
-        return _single_sub(b, _single_minus(a));
+        return _single_minus(_single_add(b, _single_minus(a)));
     }
     if (!_single_has_minus(a) && _single_has_minus(b)) {
-        return _single_sub(a, _single_minus(b));
+        return _single_add(a, _single_minus(b));
+    }
+    if (_single_has_minus(a) && _single_has_minus(b)) {
+        return _single_sub(_single_minus(b), _single_minus(a));
     }
 
     // that a >= 0, b >= 0
@@ -412,7 +427,7 @@ ui _single_sub(ui a, ui b) {
     }
 
     if (_single_is_denormalized(a) && _single_is_denormalized(b)) {
-        return a - b;
+        return flag_minus ? _single_minus(a - b) : a - b;
     }
 
     int expa = _single_get_exp(a);
@@ -427,13 +442,15 @@ ui _single_sub(ui a, ui b) {
         mantb |= (1 << 23);
 
     if (r >= 32) {
-        return a;
+        return flag_minus ? _single_minus(a) : a;
     }
 
     mantb >>= r;
     manta -= mantb;
 
-    return _single_construct(expa, manta);
+    ui ans = _single_construct(expa, manta);
+
+    return flag_minus ? _single_minus(ans) : ans;
 }
 
 ui _single_mul(ui a, ui b) {
@@ -492,10 +509,9 @@ ui _single_mul(ui a, ui b) {
         mantb |= 1 << 23;
 
     ull mul = (ull)manta * mantb;
-    mul >>= 23;
     int resexp = expa + expb;
 
-    ui ans = _single_construct(resexp, mul);
+    ui ans = _single_construct(resexp - 23, mul);
     return flag_minus ? _single_minus(ans) : ans;
 }
 
@@ -532,9 +548,8 @@ ui _single_div(ui a, ui b) {
     ull dv = ext_a / mantb;
     int resexp = expa - expb;
 
-    ui dv1 = dv >> 23;
-
-    return _single_construct(resexp, dv1);
+    return flag_minus ? _single_minus(_single_construct(resexp, dv))
+                      : _single_construct(resexp, dv);
 }
 
 /*
@@ -634,15 +649,21 @@ void _half_out(us x) {
         } else {
             int exp = _half_get_exp(x);
             us mant = _half_get_mant(x);
-            printf("0x1.%03xp%c%d", _half_align_mant_to_hex(mant),
-                   exp < 0 ? 0 : '+', exp);
+            printf("0x1.%03xp", _half_align_mant_to_hex(mant));
+            if (exp < 0) {
+                printf("%d", exp);
+            } else {
+                printf("+%d", exp);
+            }
         }
     }
 }
 
-us _half_construct(int exp, us mask) {
+us _half_construct(int exp, ui mask) {
+    if (mask == 0)
+        return SINGLE_NULL;
 
-    int shift = clzs(mask) - 5;
+    int shift = clz(mask) - 5 - 16;
     if (shift < 0) {
         mask >>= -shift;
         exp -= shift;
@@ -651,10 +672,18 @@ us _half_construct(int exp, us mask) {
     if (exp - shift >= -14) {
         mask <<= shift;
         exp -= shift;
+        if (exp >= 16)
+            return HALF_PLUS_INF;
         mask ^= 1 << 10;
         return (((us)(exp + 15)) << 10) | mask;
     }
-    mask <<= (exp + 126);
+
+    if (exp < -14) {
+        mask >>= -14 - exp;
+        if (-14 - exp >= 16)
+            return SINGLE_NULL;
+    } else
+        mask <<= (exp + 14);
     return mask;
 }
 
@@ -664,7 +693,7 @@ us _half_sub(us, us);
 
 us _half_add(us a, us b) {
     if (_half_is_nan(a) || _half_is_nan(b)) {
-        return a;
+        return HALF_NAN;
     }
     if (_half_is_plus_inf(a) && _half_is_minus_inf(b) ||
         _half_is_minus_inf(a) && _half_is_plus_inf(b)) {
@@ -723,7 +752,7 @@ us _half_add(us a, us b) {
 
 us _half_sub(us a, us b) {
     if (_half_is_nan(a) || _half_is_nan(b)) {
-        return a;
+        return HALF_NAN;
     }
     if (_half_is_plus_inf(a) && _half_is_plus_inf(b) ||
         _half_is_minus_inf(a) && _half_is_minus_inf(b)) {
@@ -735,14 +764,14 @@ us _half_sub(us a, us b) {
     if (_half_is_minus_inf(a) && _half_is_plus_inf(b)) {
         return HALF_MINUS_INF;
     }
-    if (_half_has_minus(a) && _half_has_minus(b)) {
-        return _half_minus(_half_add(_half_minus(a), _half_minus(b)));
-    }
     if (_half_has_minus(a) && !_half_has_minus(b)) {
-        return _half_sub(b, _half_minus(a));
+        return _half_minus(_half_add(b, _half_minus(a)));
     }
     if (!_half_has_minus(a) && _half_has_minus(b)) {
-        return _half_sub(a, _half_minus(b));
+        return _half_add(a, _half_minus(b));
+    }
+    if (_half_has_minus(a) && _half_has_minus(b)) {
+        return _half_sub(_half_minus(b), _half_minus(a));
     }
 
     // that a >= 0, b >= 0
@@ -757,7 +786,7 @@ us _half_sub(us a, us b) {
     }
 
     if (_half_is_denormalized(a) && _half_is_denormalized(b)) {
-        return a - b;
+        return flag_minus ? _half_minus(a - b) : a - b;
     }
 
     int expa = _half_get_exp(a);
@@ -772,13 +801,14 @@ us _half_sub(us a, us b) {
         mantb |= (1 << 10);
 
     if (r >= 16) {
-        return a;
+        return flag_minus ? _half_minus(a) : a;
     }
 
     mantb >>= r;
     manta -= mantb;
 
-    return _half_construct(expa, manta);
+    return flag_minus ? _half_minus(_half_construct(expa, manta))
+                      : _half_construct(expa, manta);
 }
 
 us _half_mul(us a, us b) {
@@ -837,10 +867,9 @@ us _half_mul(us a, us b) {
         mantb |= 1 << 10;
 
     ui mul = (ui)manta * mantb;
-    mul >>= 10;
     int resexp = expa + expb;
 
-    us ans = _half_construct(resexp, mul);
+    us ans = _half_construct(resexp - 10, mul);
     return flag_minus ? _half_minus(ans) : ans;
 }
 
@@ -877,9 +906,8 @@ us _half_div(us a, us b) {
     ui dv = ext_a / mantb;
     int resexp = expa - expb;
 
-    us dv1 = dv >> 10;
-
-    return _half_construct(resexp, dv1);
+    return flag_minus ? _half_minus(_half_construct(resexp, dv))
+                      : _half_construct(resexp, dv);
 }
 
 /*
