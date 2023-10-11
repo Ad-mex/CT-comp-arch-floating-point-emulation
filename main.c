@@ -158,9 +158,7 @@ ui _fixed_mul(ui num1, ui num2, ui a, ui b) {
     ui ans = _fixed_normalize(resx2_16 >> b, a, b);
     if (minus_flag)
         ans = _fixed_minus(ans, a, b);
-    if (_fixed_has_minus(ans, a, b) && (resx2_16 & ((1 << b) - 1))) { // round
-        ans++;
-    }
+        
     return _fixed_normalize(ans, a, b);
 }
 
@@ -184,10 +182,6 @@ ui _fixed_div(ui num1, ui num2, ui a, ui b) {
 
     if (minus_flag) {
         dv = _fixed_minus(dv, a, b);
-    }
-
-    if (ext_num1 % num2 && _fixed_has_minus(dv, a, b)) {
-        dv++;
     }
 
     return _fixed_normalize(dv, a, b);
