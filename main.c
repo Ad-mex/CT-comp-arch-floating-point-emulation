@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
 #define ui unsigned int
 #define ull unsigned long long
@@ -40,14 +41,15 @@ void _format_parse_ab(char *arg, ui *a, ui *b) {
     *b = strtoll(dot, &dot, 10);
 }
 
-void _format_error_message() {
-    puts("error, bad format");
-    exit(0);
+void _format_error_message(const char *message) {
+    fprintf(stderr, "error, bad format\n");
+    fprintf(stderr, "%s", message);
+    exit(1);
 }
 
 void _format_error_len(int argc) {
     if (argc != 4 && argc != 6) {
-        _format_error_message();
+        _format_error_message("invalid number of arguments");
     }
 }
 
@@ -55,7 +57,7 @@ void _format_error_ab(char *arg, ui *a, ui *b) {
     int len = strlen(arg);
 
     if (len > 5) {
-        _format_error_message();
+        _format_error_message("invalid A.B format");
     }
 
     ui cnt_dot = 0;
@@ -63,36 +65,36 @@ void _format_error_ab(char *arg, ui *a, ui *b) {
         if (arg[i] == '.') {
             cnt_dot++;
         } else if (arg[i] < '0' || arg[i] > '9') {
-            _format_error_message();
+            _format_error_message("invalid format A.B");
         }
     }
 
     if (cnt_dot != 1 || arg[0] == '.' || arg[len - 1] == '.') {
-        _format_error_message();
+        _format_error_message("invalid format A.B");
     }
 
     _format_parse_ab(arg, a, b);
-    if (*a + *b > 32 || *a == 0 || *b == 0) {
-        _format_error_message();
+    if (*a + *b > 32 || *a == 0) {
+        _format_error_message("invalid format A.B");
     }
 }
 
 void _format_error_round_type(char *arg) {
     if (strcmp(arg, "0") != 0 && strcmp(arg, "1") != 0 &&
         strcmp(arg, "2") != 0 && strcmp(arg, "3") != 0) {
-        _format_error_message();
+        _format_error_message("invalid round argument");
     }
 }
 
 void _format_error_hex_arg(char *arg) {
     int len = strlen(arg);
     if (len < 3 || strncmp(arg, "0x", 2) != 0) {
-        _format_error_message();
+        _format_error_message("invalid hex argument");
     }
     for (int i = 2; i < len; i++) {
         if ((arg[i] < 'a' || arg[i] > 'f') && (arg[i] < 'A' || arg[i] > 'F') &&
             (arg[i] < '0' || arg[i] > '9')) {
-            _format_error_message();
+            _format_error_message("invalid hex argument");
         }
     }
 }
@@ -113,7 +115,7 @@ ui _format_parse_hex(char *arg) {
 void _format_error_operation(char *arg) {
     if (strcmp(arg, "*") != 0 && strcmp(arg, "+") != 0 &&
         strcmp(arg, "-") != 0 && strcmp(arg, "/") != 0) {
-        _format_error_message();
+        _format_error_message("invalid operation type");
     }
 }
 
@@ -121,7 +123,9 @@ void _format_error_operation(char *arg) {
  * fixed point
  */
 
-bool _fixed_has_minus(ui num, ui a, ui b) { return num & (1u << (a + b - 1)); }
+bool _fixed_has_minus(ui num, ui a, ui b) {
+    return num & (1ull << (a + b - 1));
+}
 
 ui _fixed_normalize(ui num, ui a, ui b) {
     return num & ((1ull << (a + b)) - 1);
@@ -130,13 +134,23 @@ ui _fixed_normalize(ui num, ui a, ui b) {
 ui _fixed_minus(ui num, ui a, ui b) { return _fixed_normalize(~num + 1, a, b); }
 
 void _fixed_out(ui num, ui a, ui b) {
+    bool minus_flag = 0;
     if (_fixed_has_minus(num, a, b)) { // => minus
-        printf("-");
+        minus_flag = 1;
         num = _fixed_minus(num, a, b);
     }
-    printf("%d.", num >> b);
     ull frac = num & ((1u << b) - 1);
-    printf("%03d", (ui)((frac * 125) >> (b - 3)));
+    ui cel = num >> b;
+    ui drob;
+    if (b >= 3)
+        drob = (ui)((frac * 125) >> (b - 3));
+    else
+        drob = (ui)((frac * 125) << (3 - b));
+    if (minus_flag && (cel != 0 || drob != 0)) {
+        printf("-");
+    }
+    printf("%u.", cel);
+    printf("%03d", drob);
 }
 
 ui _fixed_add(ui num1, ui num2, ui a, ui b) {
@@ -158,14 +172,14 @@ ui _fixed_mul(ui num1, ui num2, ui a, ui b) {
     ui ans = _fixed_normalize(resx2_16 >> b, a, b);
     if (minus_flag)
         ans = _fixed_minus(ans, a, b);
-        
+
     return _fixed_normalize(ans, a, b);
 }
 
 ui _fixed_div(ui num1, ui num2, ui a, ui b) {
 
     if (num2 == 0) {
-        puts("error");
+        printf("error");
         exit(0);
     }
 
@@ -454,52 +468,34 @@ ui _single_sub(ui a, ui b) {
 ui _single_mul(ui a, ui b) {
     if (_single_is_nan(a) || _single_is_nan(b))
         return SINGLE_NAN;
-    if (_single_is_minus_inf(a)) {
-        if (_single_is_minus_inf(b)) {
-            return SINGLE_PLUS_INF;
-        } else if (_single_is_plus_inf(b)) {
-            return SINGLE_MINUS_INF;
-        } else if (_single_is_null(b)) {
-            return SINGLE_NAN;
-        } else {
-            return SINGLE_MINUS_INF;
-        }
+    if (_single_is_minus_inf(a) && _single_is_null(b)) {
+        return SINGLE_NAN;
     }
-    if (_single_is_plus_inf(a)) {
-        if (_single_is_plus_inf(b)) {
-            return SINGLE_PLUS_INF;
-        } else if (_single_is_minus_inf(b)) {
-            return SINGLE_MINUS_INF;
-        } else if (_single_is_null(b)) {
-            return SINGLE_NAN;
-        } else {
-            return SINGLE_PLUS_INF;
-        }
+    if (_single_is_plus_inf(a) && _single_is_null(b)) {
+        return SINGLE_NAN;
     }
-    if (_single_is_minus_inf(b)) {
-        if (_single_is_null(a)) {
-            return SINGLE_NAN;
-        } else {
-            return SINGLE_MINUS_INF;
-        }
+    if (_single_is_minus_inf(b) && _single_is_null(a)) {
+        return SINGLE_NAN;
     }
-    if (_single_is_plus_inf(b)) {
-        if (_single_is_null(a)) {
-            return SINGLE_NAN;
-        } else {
-            return SINGLE_PLUS_INF;
-        }
-    }
-
-    if (_single_is_null(a) || _single_is_null(b)) {
-        return SINGLE_NULL;
+    if (_single_is_plus_inf(b) && _single_is_null(a)) {
+        return SINGLE_NAN;
     }
 
     bool flag_minus = _single_has_minus(a) ^ _single_has_minus(b);
+    a = _single_abs(a);
+    b = _single_abs(b);
+
+    if (_single_is_null(a) || _single_is_null(b)) {
+        return flag_minus ? SINGLE_MINUS_NULL : SINGLE_NULL;
+    }
+    if (_single_is_plus_inf(a) || _single_is_plus_inf(b)) {
+        return flag_minus ? SINGLE_MINUS_INF : SINGLE_PLUS_INF;
+    }
+
     int expa = _single_get_exp(a);
     int expb = _single_get_exp(b);
-    ui manta = _single_get_mant(_single_abs(a));
-    ui mantb = _single_get_mant(_single_abs(b));
+    ui manta = _single_get_mant(a);
+    ui mantb = _single_get_mant(b);
 
     if (!_single_is_denormalized(a))
         manta |= 1 << 23;
@@ -514,28 +510,28 @@ ui _single_mul(ui a, ui b) {
 }
 
 ui _single_div(ui a, ui b) {
-    if (_single_is_nan(a) || _single_is_nan(b))
+    if (_single_is_nan(a) || _single_is_nan(b)) {
         return SINGLE_NAN;
-    if (_single_is_null(a)) {
-        if (_single_is_null(b)) {
-            return SINGLE_NAN;
-        } else {
-            return SINGLE_NULL;
-        }
-    } else if ((_single_is_minus_inf(a) || _single_is_plus_inf(a)) &&
-               (_single_is_minus_inf(b) || _single_is_plus_inf(b))) {
+    }
+    if(_single_is_null(a) && _single_is_null(b)){
         return SINGLE_NAN;
-    } else if (_single_is_plus_null(b)) {
-        return SINGLE_PLUS_INF;
-    } else if (_single_is_minus_null(b)) {
-        return SINGLE_MINUS_INF;
     }
 
     bool flag_minus = _single_has_minus(a) ^ _single_has_minus(b);
+    a = _single_abs(a);
+    b = _single_abs(b);
+    
+    if(_single_is_null(a)){
+        return flag_minus ? SINGLE_MINUS_NULL : SINGLE_NULL;
+    }
+    if(_single_is_null(b)){
+        return flag_minus ? SINGLE_MINUS_INF : SINGLE_PLUS_INF;
+    }
+
     int expa = _single_get_exp(a);
     int expb = _single_get_exp(b);
-    ui manta = _single_get_mant(_single_abs(a));
-    ui mantb = _single_get_mant(_single_abs(b));
+    ui manta = _single_get_mant(a);
+    ui mantb = _single_get_mant(b);
 
     if (!_single_is_denormalized(a))
         manta |= 1 << 23;
@@ -812,48 +808,30 @@ us _half_sub(us a, us b) {
 us _half_mul(us a, us b) {
     if (_half_is_nan(a) || _half_is_nan(b))
         return HALF_NAN;
-    if (_half_is_minus_inf(a)) {
-        if (_half_is_minus_inf(b)) {
-            return HALF_PLUS_INF;
-        } else if (_half_is_plus_inf(b)) {
-            return HALF_MINUS_INF;
-        } else if (_half_is_null(b)) {
-            return HALF_NAN;
-        } else {
-            return HALF_MINUS_INF;
-        }
+    if (_half_is_minus_inf(a) && _half_is_null(b)) {
+        return HALF_NAN;
     }
-    if (_half_is_plus_inf(a)) {
-        if (_half_is_plus_inf(b)) {
-            return HALF_PLUS_INF;
-        } else if (_half_is_minus_inf(b)) {
-            return HALF_MINUS_INF;
-        } else if (_half_is_null(b)) {
-            return HALF_NAN;
-        } else {
-            return HALF_PLUS_INF;
-        }
+    if (_half_is_plus_inf(a) && _half_is_null(b)) {
+        return HALF_NAN;
     }
-    if (_half_is_minus_inf(b)) {
-        if (_half_is_null(a)) {
-            return HALF_NAN;
-        } else {
-            return HALF_MINUS_INF;
-        }
+    if (_half_is_minus_inf(b) && _half_is_null(a)) {
+        return HALF_NAN;
     }
-    if (_half_is_plus_inf(b)) {
-        if (_half_is_null(a)) {
-            return HALF_NAN;
-        } else {
-            return HALF_PLUS_INF;
-        }
-    }
-
-    if (_half_is_null(a) || _half_is_null(b)) {
-        return HALF_NULL;
+    if (_half_is_plus_inf(b) && _half_is_null(a)) {
+        return HALF_NAN;
     }
 
     bool flag_minus = _half_has_minus(a) ^ _half_has_minus(b);
+    a = _half_abs(a);
+    b = _half_abs(b);
+
+    if (_half_is_null(a) || _half_is_null(b)) {
+        return flag_minus ? HALF_MINUS_NULL : HALF_NULL;
+    }
+    if (_half_is_plus_inf(a) || _half_is_plus_inf(b)) {
+        return flag_minus ? HALF_MINUS_INF : HALF_PLUS_INF;
+    }
+
     int expa = _half_get_exp(a);
     int expb = _half_get_exp(b);
     us manta = _half_get_mant(_half_abs(a));
@@ -872,24 +850,24 @@ us _half_mul(us a, us b) {
 }
 
 us _half_div(us a, us b) {
-    if (_half_is_nan(a) || _half_is_nan(b))
+    if (_half_is_nan(a) || _half_is_nan(b)) {
         return HALF_NAN;
-    if (_half_is_null(a)) {
-        if (_half_is_null(b)) {
-            return HALF_NAN;
-        } else {
-            return HALF_NULL;
-        }
-    } else if ((_half_is_minus_inf(a) || _half_is_plus_inf(a)) &&
-               (_half_is_minus_inf(b) || _half_is_plus_inf(b))) {
+    }
+    if(_half_is_null(a) && _half_is_null(b)){
         return HALF_NAN;
-    } else if (_half_is_plus_null(b)) {
-        return HALF_PLUS_INF;
-    } else if (_half_is_minus_null(b)) {
-        return HALF_MINUS_INF;
     }
 
     bool flag_minus = _half_has_minus(a) ^ _half_has_minus(b);
+    a = _half_abs(a);
+    b = _half_abs(b);
+    
+    if(_half_is_null(a)){
+        return flag_minus ? HALF_MINUS_NULL : HALF_NULL;
+    }
+    if(_half_is_null(b)){
+        return flag_minus ? HALF_MINUS_INF : HALF_PLUS_INF;
+    }
+
     int expa = _half_get_exp(a);
     int expb = _half_get_exp(b);
     us manta = _half_get_mant(_half_abs(a));
@@ -913,6 +891,9 @@ us _half_div(us a, us b) {
  */
 
 int main(int argc, char **argv) {
+
+    _format_error_len(argc);
+
     char *format_str = argv[1];
     char *round_str = argv[2];
     char format;
@@ -938,7 +919,7 @@ int main(int argc, char **argv) {
             if (argc == 4) { // one number
                 _format_error_hex_arg(argv[3]);
 
-                ui num = _format_parse_hex(argv[3]);
+                ui num = _fixed_normalize(_format_parse_hex(argv[3]), a, b);
                 _fixed_out(num, a, b);
             } else {
                 _format_error_hex_arg(argv[3]);
@@ -1019,5 +1000,7 @@ int main(int argc, char **argv) {
                 }
             }
         }
+    } else {
+        exit(1);
     }
 }
