@@ -513,18 +513,22 @@ ui _single_div(ui a, ui b) {
     if (_single_is_nan(a) || _single_is_nan(b)) {
         return SINGLE_NAN;
     }
-    if(_single_is_null(a) && _single_is_null(b)){
+    if (_single_is_null(a) && _single_is_null(b)) {
         return SINGLE_NAN;
     }
 
     bool flag_minus = _single_has_minus(a) ^ _single_has_minus(b);
     a = _single_abs(a);
     b = _single_abs(b);
-    
-    if(_single_is_null(a)){
+
+    if (_single_is_plus_inf(a) && _single_is_plus_inf(b)) {
+        return SINGLE_NAN;
+    }
+
+    if (_single_is_null(a)) {
         return flag_minus ? SINGLE_MINUS_NULL : SINGLE_NULL;
     }
-    if(_single_is_null(b)){
+    if (_single_is_null(b)) {
         return flag_minus ? SINGLE_MINUS_INF : SINGLE_PLUS_INF;
     }
 
@@ -853,18 +857,22 @@ us _half_div(us a, us b) {
     if (_half_is_nan(a) || _half_is_nan(b)) {
         return HALF_NAN;
     }
-    if(_half_is_null(a) && _half_is_null(b)){
+    if (_half_is_null(a) && _half_is_null(b)) {
         return HALF_NAN;
     }
 
     bool flag_minus = _half_has_minus(a) ^ _half_has_minus(b);
     a = _half_abs(a);
     b = _half_abs(b);
-    
-    if(_half_is_null(a)){
+
+    if (_half_is_plus_inf(a) && _half_is_plus_inf(b)) {
+        return HALF_NAN;
+    }
+
+    if (_half_is_null(a)) {
         return flag_minus ? HALF_MINUS_NULL : HALF_NULL;
     }
-    if(_half_is_null(b)){
+    if (_half_is_null(b)) {
         return flag_minus ? HALF_MINUS_INF : HALF_PLUS_INF;
     }
 
