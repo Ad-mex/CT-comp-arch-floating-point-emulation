@@ -76,7 +76,7 @@ jobs:
         run: |
           echo "# Parameters" >> $env:GITHUB_STEP_SUMMARY
           echo " Проверка отчёта - check_pdf: $${{ inputs.check_pdf }}" >> $env:GITHUB_STEP_SUMMARY
-          echo " Округление 0: ${{ inputs.rounding }}" >> $env:GITHUB_STEP_SUMMARY
+          echo " Округление: ${{ inputs.rounding }}" >> $env:GITHUB_STEP_SUMMARY
           echo " Тест на вывод - print: ${{ inputs.print }}" >> $env:GITHUB_STEP_SUMMARY
           echo " Тест с + (фиксированная точка) - fixed_op: $${{ inputs.fixed_op }}" >> $env:GITHUB_STEP_SUMMARY
           echo " Тест с * (плавающая точка) - floating_op: $${{ inputs.floating_op }}" >> $env:GITHUB_STEP_SUMMARY
@@ -233,10 +233,10 @@ jobs:
         run: | 
           $tests = @()
 
-          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 0"; active="${{inputs.print}}" -ne "Тольцо плавающая точка" -and "${{inputs.rounding}}" -eq "0"; argv="16.12 0 0x17360"; ref="23.210" }  
-          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 1"; active="${{inputs.print}}" -ne "Тольцо плавающая точка" -and "${{inputs.rounding}}" -eq "1"; argv="16.16 1 0x173600"; ref="23.211" }
-          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 2"; active="${{inputs.print}}" -ne "Тольцо плавающая точка" -and "${{inputs.rounding}}" -eq "2"; argv="8.8 2 0x9c9f"; ref="-99.378" }
-          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 3"; active="${{inputs.print}}" -ne "Тольцо плавающая точка" -and "${{inputs.rounding}}" -eq "3"; argv="8.8 3 0x9c9f"; ref="-99.379" }
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 0"; active="${{inputs.print}}" -ne "Только плавающая точка" -and "${{inputs.rounding}}" -eq "0"; argv="16.12 0 0x17360"; ref="23.210" }  
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 1"; active="${{inputs.print}}" -ne "Только плавающая точка" -and "${{inputs.rounding}}" -eq "1"; argv="16.16 1 0x173600"; ref="23.211" }
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 2"; active="${{inputs.print}}" -ne "Только плавающая точка" -and "${{inputs.rounding}}" -eq "2"; argv="8.8 2 0x9c9f"; ref="-99.378" }
+          $tests += New-Object PSObject -Property @{ name="Фикс. точка: вывод с округлением 3"; active="${{inputs.print}}" -ne "Только плавающая точка" -and "${{inputs.rounding}}" -eq "3"; argv="8.8 3 0x9c9f"; ref="-99.379" }
 
           $tests += New-Object PSObject -Property @{ name="Фикс. точка: + с округлением 0"; active="${{inputs.rounding}}" -eq "0" -and $${{inputs.fixed_op}}; argv="8.8 0 0x9c9f + 0x1736"; ref="-76.167" }
           $tests += New-Object PSObject -Property @{ name="Фикс. точка: + с округлением 1"; active="${{inputs.rounding}}" -eq "1" -and $${{inputs.fixed_op}}; argv="8.8 1 0xdc9f + 0xd736"; ref="-76.168" } #mod
@@ -282,22 +282,51 @@ jobs:
             }
             echo "## Test $($test.name)" >> $env:GITHUB_STEP_SUMMARY  
             "::group::Output log test_$($test.name)"
-
-            $test_input = $test.argv.Split() | ForEach { """$_""" } 
-            $test_ref = $test.ref
             
-            if (${{ steps.detect_lang.outputs.lang }} -eq 3) 
-            { java -classpath ../ Main $test_input 2>stderr.log 1>stdout.log }
+
+            $test_input = $test.argv.split() #| ForEach { "$_" } 
+            $test_ref = $test.ref
+
+            echo "test_input"
+            $test_input
+            echo "test_ref"
+            $test_ref
+            echo "detect_lang.outputs.lang"
+            ${{ steps.detect_lang.outputs.lang }}
+            
+              echo "dbg ${{env.EXE}} $test_input"            
+              #./${{env.EXE}} $test_input 2>stderr.log 1>stdout.log             
+              #./${{env.EXE}} $test_input
+            
+            $pr = if (${{ steps.detect_lang.outputs.lang }} -eq 3) 
+            { Start-Process "java" -PassThru -ArgumentList "-classpath ../ Main $test_input" -RedirectStandardOutput "stdout.log" -RedirectStandardError "stderr.log" -NoNewWindow }
             elseif (${{ steps.detect_lang.outputs.lang }} -ne 0)  
-            { & ./${{env.EXE}} $test_input 2>stderr.log 1>stdout.log }
+            { Start-Process "./${{env.EXE}}" -PassThru -ArgumentList "$test_input" -RedirectStandardOutput "stdout.log" -RedirectStandardError "stderr.log" -NoNewWindow }
             else
-            { python ../main.py $test_input 2>stderr.log 1>stdout.log  }
-            $exit_code_p = $LastExitCode           
+            { Start-Process "python" -PassThru -ArgumentList "../main.py $test_input" -RedirectStandardOutput "stdout.log" -RedirectStandardError "stderr.log" -NoNewWindow }
+
+            $timeout = $false
+            Wait-Process -InputObject $pr
+            #if (-not $pr.WaitForExit()) # 30 sec?
+            #{
+            #  KillChildren $pr.id
+            #  Stop-Process $pr
+            #  $timeout = $true
+            #}
+            $exit_code_p = [int]$pr.ExitCode    
             
             $stderr = if ((& Test-Path -Path stderr.log -PathType Leaf)) { $(Get-Content stderr.log -Raw) } else {'<empty>'}
+            echo "`nstderr"
+            $stderr
+            Test-Path -Path stderr.log -PathType Leaf
             $stdout = if ((& Test-Path -Path stdout.log -PathType Leaf)) { $(Get-Content stdout.log -Raw) } else {'<empty>'}
+            echo "`nstdout"
+            $stdout
+            Test-Path -Path stdout.log -PathType Leaf
             $stdout1 = ""
             try { $stdout1 = $stdout.replace('`n', '<br>') } catch { $stdout1 = '<empty>' }
+            echo "`nstdout1"
+            $stdout1
                         
             echo "| input (argv) | expected | exit code |" >> $env:GITHUB_STEP_SUMMARY   
             echo "| --- | --- | --- |" >> $env:GITHUB_STEP_SUMMARY    
@@ -326,13 +355,14 @@ jobs:
             echo '```' >> $env:GITHUB_STEP_SUMMARY
 
             echo "Result:" >> $env:GITHUB_STEP_SUMMARY 
-            if ($exit_code_p -ne 0)
-            {         
-              echo '```' >> $env:GITHUB_STEP_SUMMARY      
-              echo "❌ [ERROR] Program completed with code $exit_code_p (!= 0)" >> $env:GITHUB_STEP_SUMMARY 
-              echo '```' >> $env:GITHUB_STEP_SUMMARY               
-              $test_exit_code += 10
-            }          
+
+            if ($timeout)
+            {
+              echo '```' >> $env:GITHUB_STEP_SUMMARY
+              echo "❌ [ERROR] Stderr is not empty [program completed with code $exit_code_p]" >> $env:GITHUB_STEP_SUMMARY        
+              echo '```' >> $env:GITHUB_STEP_SUMMARY       
+              $test_exit_code += 100
+            } 
             elseif ((& Test-Path -Path stderr.log -PathType Leaf) -and ((Get-ChildItem -Path stderr.log).Length -ne 0))
             {
               echo '```' >> $env:GITHUB_STEP_SUMMARY
@@ -340,6 +370,13 @@ jobs:
               echo '```' >> $env:GITHUB_STEP_SUMMARY       
               $test_exit_code += 100
             } 
+            elseif ($exit_code_p -ne 0)
+            {         
+              echo '```' >> $env:GITHUB_STEP_SUMMARY      
+              echo "❌ [ERROR] Program completed with code $exit_code_p (!= 0)" >> $env:GITHUB_STEP_SUMMARY 
+              echo '```' >> $env:GITHUB_STEP_SUMMARY               
+              $test_exit_code += 10
+            }   
             elseif ((& Test-Path -Path stdout.log -PathType Leaf) -and ($stdout1 -eq '<empty>'))
             {
               echo '```' >> $env:GITHUB_STEP_SUMMARY
